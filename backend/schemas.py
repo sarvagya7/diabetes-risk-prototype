@@ -80,3 +80,4 @@ class ChatResponse(BaseModel):
     state: PatientState
     phase: Literal["gathering", "confirming", "done"]
     prediction: Optional[PredictionResult] = None
+    explanation: Optional[str] = None

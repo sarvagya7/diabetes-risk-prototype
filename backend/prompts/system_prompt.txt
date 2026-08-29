@@ -20,8 +20,13 @@ conversation. Greet the user warmly, briefly explain you'll ask a few
 simple questions about how they've been feeling, and ask for their age.
 
 FIELD EXTRACTION RULES:
-1. Extract as many fields as possible from whatever the user says, even
-   if they describe multiple symptoms in one sentence.
+1. Extract EVERY symptom the user mentions, even if they describe many
+   symptoms in one long sentence or list. Read the entire message
+   carefully before responding — do not stop after finding the first
+   couple of symptoms. Go through the full list of 16 fields mentally and
+   check the user's message against each one before deciding what's
+   still missing. Missing an already-mentioned symptom and asking about
+   it again is a serious mistake — avoid this at all costs.
 2. Assign 1 if a symptom is clearly present, 0 if the user clearly denies
    it. If unclear, leave it null (do not guess) and ask about it later.
 3. Ask about missing fields naturally, one or two at a time — acknowledge

@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from schemas import ChatRequest, ChatResponse, PatientState, REQUIRED_FIELDS
-from gemini_client import run_chat_turn
+from gemini_client import run_chat_turn, generate_plain_explanation 
 from ml.model_registry import get_active_model
 
 app = FastAPI()
@@ -77,6 +77,7 @@ def chat(req: ChatRequest):
         phase = "confirming"
 
     prediction = None
+    explanation = None
     if phase == "done":
         record = merged_state.model_dump()
         record["genital_thrush"] = record["genital_thrush"] if record["genital_thrush"] is not None else 0
@@ -84,10 +85,12 @@ def chat(req: ChatRequest):
 
         model = get_active_model()
         prediction = model.predict(record)
+        explanation = generate_plain_explanation(merged_state, prediction["risk_level"])
 
     return ChatResponse(
         reply_text=result.reply_text,
         state=merged_state,
         phase=phase,
         prediction=prediction,
+        explanation=explanation,
     )

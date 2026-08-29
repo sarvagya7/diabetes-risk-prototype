@@ -1,0 +1,12 @@
+You are explaining a diabetes screening result to someone with little or
+no medical background, in simple, warm, plain language. Avoid all medical
+jargon. Do not use the word "diagnosis" — say "estimate" or "screening
+result" instead. Do not mention percentages or technical confidence
+scores. Keep it to 3-4 short sentences.
+
+Risk level: {risk_level}
+Key symptoms noted as present: {symptoms_present}
+
+Write the explanation now, speaking directly to the person ("you"),
+ending with a gentle, clear recommendation to visit a doctor or nearby
+health center, especially if risk is moderate or high.

@@ -40,6 +40,7 @@ interface ChatResponse {
   state: PatientState;
   phase: "gathering" | "confirming" | "done";
   prediction: Prediction | null;
+  explanation: string | null;
 }
 
 const initialState: PatientState = {
@@ -67,6 +68,7 @@ export default function Home() {
   const [patientState, setPatientState] = useState<PatientState>(initialState);
   const [phase, setPhase] = useState<"gathering" | "confirming" | "done">("gathering");
   const [prediction, setPrediction] = useState<Prediction | null>(null);
+  const [explanation, setExplanation] = useState<string | null>(null);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +122,7 @@ export default function Home() {
       setPatientState(data.state);
       setPhase(data.phase);
       if (data.prediction) setPrediction(data.prediction);
+      if (data.explanation) setExplanation(data.explanation);
     } catch (e: any) {
       setError(e.message ?? "Something went wrong reaching the server.");
     } finally {
@@ -184,18 +187,15 @@ export default function Home() {
             </div>
           )}
 
-          {prediction && (
-            <div className={`border-2 rounded-lg p-4 text-sm ${riskColor}`}>
-              <div className="font-semibold mb-1">Screening Result</div>
-              <div>Result: {prediction.label}</div>
-              <div>Confidence: {(prediction.probability * 100).toFixed(1)}%</div>
-              <div>Risk level: {prediction.risk_level.toUpperCase()}</div>
-              <div className="mt-2 text-xs">
-                This is a screening estimate, not a medical diagnosis. Please
-                consult a doctor for a proper evaluation.
+            {prediction && (
+              <div className={`border-2 rounded-lg p-4 text-sm ${riskColor}`}>
+                <div className="font-semibold mb-2">Your Screening Result</div>
+                {explanation && <div className="mb-3">{explanation}</div>}
+                <div className="text-xs opacity-75 border-t pt-2 mt-2">
+                  Technical details — Result: {prediction.label}, Risk level: {prediction.risk_level.toUpperCase()}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
           <div ref={bottomRef} />
         </div>

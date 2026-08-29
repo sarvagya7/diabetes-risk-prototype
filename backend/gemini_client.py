@@ -101,3 +101,41 @@ Latest user message: "{user_message}"
     )
 
     return GeminiTurnOutput.model_validate_json(response.text)
+
+EXPLANATION_PROMPT_TEMPLATE = (PROMPTS_DIR / "explanation_prompt.txt").read_text(encoding="utf-8")
+
+SYMPTOM_LABELS = {
+    "polyuria": "frequent urination",
+    "polydipsia": "excessive thirst",
+    "sudden_weight_loss": "sudden weight loss",
+    "weakness": "fatigue/weakness",
+    "polyphagia": "excessive hunger",
+    "genital_thrush": "genital itching/infection",
+    "visual_blurring": "blurry vision",
+    "itching": "itching",
+    "irritability": "irritability",
+    "delayed_healing": "slow wound healing",
+    "partial_paresis": "limb weakness/numbness",
+    "muscle_stiffness": "muscle stiffness",
+    "alopecia": "hair loss",
+    "obesity": "being overweight",
+}
+
+
+def generate_plain_explanation(state: PatientState, risk_level: str) -> str:
+    data = state.model_dump()
+    symptoms_present = [
+        label for field, label in SYMPTOM_LABELS.items() if data.get(field) == 1
+    ]
+    symptoms_text = ", ".join(symptoms_present) if symptoms_present else "no major symptoms"
+
+    prompt = EXPLANATION_PROMPT_TEMPLATE.format(
+        risk_level=risk_level,
+        symptoms_present=symptoms_text,
+    )
+
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt,
+    )
+    return response.text.strip()
