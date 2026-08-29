@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "react";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 
+// Centralized language config — change this one value later to switch
+// languages, or expose it as a toggle in state once we add multi-language support.
+const SPEECH_LANG = "en-US";
+
 interface PatientState {
   age: number | null;
   gender: number | null;
@@ -72,10 +76,14 @@ export default function Home() {
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(true);
 
   const hasInitialized = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
+  const lastSpokenIndex = useRef(-1);
 
   useEffect(() => {
     if (hasInitialized.current) return;
@@ -92,6 +100,43 @@ export default function Home() {
       inputRef.current?.focus();
     }
   }, [loading, phase]);
+
+  // Text-to-speech: speak each new bot message aloud, exactly once.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+
+    const lastIndex = messages.length - 1;
+    if (lastIndex < 0 || lastIndex <= lastSpokenIndex.current) return;
+
+    const lastMsg = messages[lastIndex];
+    if (lastMsg.role === "bot") {
+      const utterance = new SpeechSynthesisUtterance(lastMsg.text);
+      utterance.lang = SPEECH_LANG;
+      window.speechSynthesis.cancel(); // stop any overlapping speech first
+      window.speechSynthesis.speak(utterance);
+      lastSpokenIndex.current = lastIndex;
+    }
+  }, [messages]);
+
+  // Also speak the explanation, once, when it first appears.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (explanation) {
+      const utterance = new SpeechSynthesisUtterance(explanation);
+      utterance.lang = SPEECH_LANG;
+      window.speechSynthesis.speak(utterance);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [explanation]);
+
+  // Feature-detect speech recognition support once, on mount.
+  useEffect(() => {
+    const SpeechRecognitionCtor =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      setSpeechSupported(false);
+    }
+  }, []);
 
   async function sendMessage(userText: string) {
     if (userText) {
@@ -141,6 +186,68 @@ export default function Home() {
     if (e.key === "Enter") handleSend();
   }
 
+  function handleMicClick() {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      return;
+    }
+  
+    const SpeechRecognitionCtor =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      setError("Voice input isn't supported in this browser. Please type instead.");
+      return;
+    }
+  
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = SPEECH_LANG;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+  
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+    let finalTranscript = "";
+  
+    const resetSilenceTimer = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        recognition.stop();
+      }, 1200); // stop 1.2s after the last detected speech
+    };
+  
+    recognition.onstart = () => setIsRecording(true);
+  
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
+      resetSilenceTimer();
+    };
+  
+    recognition.onerror = (event: any) => {
+      setIsRecording(false);
+      if (silenceTimer) clearTimeout(silenceTimer);
+      setError(`Voice input error: ${event.error}. Please try again or type instead.`);
+    };
+  
+    recognition.onend = () => {
+      setIsRecording(false);
+      if (silenceTimer) clearTimeout(silenceTimer);
+      const text = finalTranscript.trim();
+      if (text && !loading && phase !== "done") {
+        sendMessage(text);
+      }
+    };
+  
+    recognitionRef.current = recognition;
+    recognition.start();
+  }
+  
   const riskColor =
     prediction?.risk_level === "high"
       ? "bg-red-100 border-red-500 text-red-800"
@@ -187,20 +294,32 @@ export default function Home() {
             </div>
           )}
 
-            {prediction && (
-              <div className={`border-2 rounded-lg p-4 text-sm ${riskColor}`}>
-                <div className="font-semibold mb-2">Your Screening Result</div>
-                {explanation && <div className="mb-3">{explanation}</div>}
-                <div className="text-xs opacity-75 border-t pt-2 mt-2">
-                  Technical details — Result: {prediction.label}, Risk level: {prediction.risk_level.toUpperCase()}
-                </div>
+          {prediction && (
+            <div className={`border-2 rounded-lg p-4 text-sm ${riskColor}`}>
+              <div className="font-semibold mb-2">Your Screening Result</div>
+              {explanation && <div className="mb-3">{explanation}</div>}
+              <div className="text-xs opacity-75 border-t pt-2 mt-2">
+                Technical details — Result: {prediction.label}, Risk level: {prediction.risk_level.toUpperCase()}
               </div>
-            )}
+            </div>
+          )}
 
           <div ref={bottomRef} />
         </div>
 
         <div className="border-t p-3 flex gap-2">
+          <button
+            onClick={handleMicClick}
+            disabled={loading || phase === "done" || !speechSupported}
+            title={speechSupported ? "Tap to speak" : "Voice input not supported in this browser"}
+            className={`px-3 py-2 rounded-lg text-sm disabled:opacity-50 ${
+              isRecording
+                ? "bg-red-500 text-white animate-pulse"
+                : "bg-gray-200 text-gray-700"
+            }`}
+          >
+            {isRecording ? "● Recording..." : "🎤"}
+          </button>
           <input
             ref={inputRef}
             type="text"
@@ -209,7 +328,7 @@ export default function Home() {
             onKeyDown={handleKeyDown}
             disabled={loading || phase === "done"}
             placeholder={
-              phase === "done" ? "Conversation complete" : "Type your reply..."
+              phase === "done" ? "Conversation complete" : "Type or tap mic to speak..."
             }
             className="flex-1 border rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 bg-white disabled:bg-gray-100"
           />
