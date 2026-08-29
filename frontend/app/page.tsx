@@ -4,9 +4,16 @@ import { useEffect, useRef, useState } from "react";
 
 const BACKEND_URL = "http://127.0.0.1:8000";
 
-// Centralized language config — change this one value later to switch
-// languages, or expose it as a toggle in state once we add multi-language support.
-const SPEECH_LANG = "en-US";
+interface LanguageOption {
+  code: string;        // BCP-47 code for Web Speech API
+  label: string;       // shown in dropdown
+  geminiName: string;  // sent to backend, told to Gemini
+}
+
+const LANGUAGE_OPTIONS: LanguageOption[] = [
+  { code: "en-US", label: "English", geminiName: "English" },
+  { code: "hi-IN", label: "हिंदी (Hindi)", geminiName: "Hindi" },
+];
 
 interface PatientState {
   age: number | null;
@@ -78,6 +85,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
+  const [selectedLanguage, setSelectedLanguage] = useState<LanguageOption>(LANGUAGE_OPTIONS[0]);
+  const [languageConfirmed, setLanguageConfirmed] = useState(false);
 
   const hasInitialized = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -85,11 +94,6 @@ export default function Home() {
   const recognitionRef = useRef<any>(null);
   const lastSpokenIndex = useRef(-1);
 
-  useEffect(() => {
-    if (hasInitialized.current) return;
-    hasInitialized.current = true;
-    sendMessage("");
-  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -111,19 +115,19 @@ export default function Home() {
     const lastMsg = messages[lastIndex];
     if (lastMsg.role === "bot") {
       const utterance = new SpeechSynthesisUtterance(lastMsg.text);
-      utterance.lang = SPEECH_LANG;
+      utterance.lang = selectedLanguage.code;
       window.speechSynthesis.cancel(); // stop any overlapping speech first
       window.speechSynthesis.speak(utterance);
       lastSpokenIndex.current = lastIndex;
     }
-  }, [messages]);
+  }, [messages, selectedLanguage]);
 
   // Also speak the explanation, once, when it first appears.
   useEffect(() => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     if (explanation) {
       const utterance = new SpeechSynthesisUtterance(explanation);
-      utterance.lang = SPEECH_LANG;
+      utterance.lang = selectedLanguage.code;
       window.speechSynthesis.speak(utterance);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -138,11 +142,13 @@ export default function Home() {
     }
   }, []);
 
-  async function sendMessage(userText: string) {
+  async function sendMessage(userText: string, languageOverride?: LanguageOption) {
     if (userText) {
       setMessages((prev) => [...prev, { role: "user", text: userText }]);
     }
-
+  
+    const languageToUse = languageOverride ?? selectedLanguage;
+  
     setLoading(true);
     setError(null);
     try {
@@ -153,16 +159,17 @@ export default function Home() {
           history: messages,
           state: patientState,
           user_message: userText,
+          language: languageToUse.geminiName,
         }),
       });
-
+  
       if (!res.ok) {
         const errBody = await res.text();
         throw new Error(`Server error ${res.status}: ${errBody}`);
       }
-
+  
       const data: ChatResponse = await res.json();
-
+  
       setMessages((prev) => [...prev, { role: "bot", text: data.reply_text }]);
       setPatientState(data.state);
       setPhase(data.phase);
@@ -191,31 +198,31 @@ export default function Home() {
       recognitionRef.current?.stop();
       return;
     }
-  
+
     const SpeechRecognitionCtor =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
       setError("Voice input isn't supported in this browser. Please type instead.");
       return;
     }
-  
+
     const recognition = new SpeechRecognitionCtor();
-    recognition.lang = SPEECH_LANG;
+    recognition.lang = selectedLanguage.code;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-  
+
     let silenceTimer: ReturnType<typeof setTimeout> | null = null;
     let finalTranscript = "";
-  
+
     const resetSilenceTimer = () => {
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
         recognition.stop();
-      }, 1200); // stop 1.2s after the last detected speech
+      }, 1500); // stop 1.2s after the last detected speech
     };
-  
+
     recognition.onstart = () => setIsRecording(true);
-  
+
     recognition.onresult = (event: any) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -228,13 +235,13 @@ export default function Home() {
       }
       resetSilenceTimer();
     };
-  
+
     recognition.onerror = (event: any) => {
       setIsRecording(false);
       if (silenceTimer) clearTimeout(silenceTimer);
       setError(`Voice input error: ${event.error}. Please try again or type instead.`);
     };
-  
+
     recognition.onend = () => {
       setIsRecording(false);
       if (silenceTimer) clearTimeout(silenceTimer);
@@ -243,11 +250,31 @@ export default function Home() {
         sendMessage(text);
       }
     };
-  
+
     recognitionRef.current = recognition;
     recognition.start();
   }
+
+  function handleLanguageSelect(lang: LanguageOption) {
+    setSelectedLanguage(lang);
+    setLanguageConfirmed(true);
   
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      const confirmText =
+        lang.geminiName === "Hindi"
+          ? "आपने हिंदी चुनी है। अब हम शुरू करते हैं।"
+          : "You have selected English. Let's begin.";
+      const utterance = new SpeechSynthesisUtterance(confirmText);
+      utterance.lang = lang.code;
+      window.speechSynthesis.speak(utterance);
+    }
+  
+    if (!hasInitialized.current) {
+      hasInitialized.current = true;
+      sendMessage("", lang);  // pass lang explicitly, don't rely on state timing
+    }
+  }
+
   const riskColor =
     prediction?.risk_level === "high"
       ? "bg-red-100 border-red-500 text-red-800"
@@ -255,92 +282,145 @@ export default function Home() {
       ? "bg-yellow-100 border-yellow-500 text-yellow-800"
       : "bg-green-100 border-green-500 text-green-800";
 
-  return (
-    <main className="flex min-h-screen flex-col items-center bg-gray-50 p-4">
-      <div className="w-full max-w-xl flex flex-col h-[85vh] bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="bg-blue-600 text-white p-4 font-semibold text-lg">
-          Bot — Diabetes Risk Screening
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {messages.map((msg, i) => (
-            <div
-              key={i}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
-              <div
-                className={`max-w-[75%] px-4 py-2 rounded-lg text-sm ${
-                  msg.role === "user"
-                    ? "bg-blue-500 text-white rounded-br-none"
-                    : "bg-gray-200 text-gray-900 rounded-bl-none"
+      if (!languageConfirmed) {
+        return (
+          <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-blue-50 to-white p-4">
+            <div className="w-full max-w-md text-center">
+              <div className="text-6xl mb-4">🩺</div>
+              <h1 className="text-2xl font-bold text-gray-800 mb-2">
+                Bot — Diabetes Risk Screening
+              </h1>
+              <p className="text-lg text-gray-600 mb-10">
+                Please choose your language
+                <br />
+                <span lang="hi">कृपया अपनी भाषा चुनें</span>
+              </p>
+      
+              <div className="grid grid-cols-1 gap-5">
+                {LANGUAGE_OPTIONS.map((lang) => (
+                  <button
+                    key={lang.code}
+                    onClick={() => handleLanguageSelect(lang)}
+                    className="flex items-center justify-center gap-4 bg-white border-2 border-blue-200 hover:border-blue-500 hover:bg-blue-50 rounded-2xl py-6 px-6 shadow-md transition-all active:scale-95"
+                  >
+                    <span className="text-2xl font-bold text-blue-500 bg-blue-50 rounded-full w-12 h-12 flex items-center justify-center">
+                      {lang.geminiName === "Hindi" ? "अ" : "A"}
+                    </span>
+                    <span className="text-3xl font-semibold text-gray-800">
+                      {lang.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+      
+              <p className="text-sm text-gray-400 mt-10">
+                🔊 Tap a language to hear it confirmed aloud
+              </p>
+            </div>
+          </main>
+        );
+      }
+      
+      return (
+        <main className="flex min-h-screen flex-col items-center bg-gray-50 p-4">
+          <div className="w-full max-w-xl flex flex-col h-[85vh] bg-white rounded-lg shadow-lg overflow-hidden">
+            <div className="bg-blue-600 text-white p-4 font-semibold text-lg flex justify-between items-center">
+              <span>Bot — Diabetes Risk Screening</span>
+              <select
+                value={selectedLanguage.code}
+                onChange={(e) => {
+                  const chosen = LANGUAGE_OPTIONS.find((l) => l.code === e.target.value);
+                  if (chosen) setSelectedLanguage(chosen);
+                }}
+                className="text-sm text-gray-900 bg-white rounded px-2 py-1"
+              >
+                {LANGUAGE_OPTIONS.map((lang) => (
+                  <option key={lang.code} value={lang.code}>
+                    {lang.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+      
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[75%] px-4 py-2 rounded-lg text-sm ${
+                      msg.role === "user"
+                        ? "bg-blue-500 text-white rounded-br-none"
+                        : "bg-gray-200 text-gray-900 rounded-bl-none"
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
+                </div>
+              ))}
+      
+              {loading && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-200 text-gray-500 px-4 py-2 rounded-lg text-sm italic">
+                    Bot is typing...
+                  </div>
+                </div>
+              )}
+      
+              {error && (
+                <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-2 rounded-lg text-sm">
+                  {error}
+                </div>
+              )}
+      
+              {prediction && (
+                <div className={`border-2 rounded-lg p-4 text-sm ${riskColor}`}>
+                  <div className="font-semibold mb-2">Your Screening Result</div>
+                  {explanation && <div className="mb-3">{explanation}</div>}
+                  <div className="text-xs opacity-75 border-t pt-2 mt-2">
+                    Technical details — Result: {prediction.label}, Risk level: {prediction.risk_level.toUpperCase()}
+                  </div>
+                </div>
+              )}
+      
+              <div ref={bottomRef} />
+            </div>
+      
+            <div className="border-t p-3 flex gap-2">
+              <button
+                onClick={handleMicClick}
+                disabled={loading || phase === "done" || !speechSupported}
+                title={speechSupported ? "Tap to speak" : "Voice input not supported in this browser"}
+                className={`px-3 py-2 rounded-lg text-sm disabled:opacity-50 ${
+                  isRecording
+                    ? "bg-red-500 text-white animate-pulse"
+                    : "bg-gray-200 text-gray-700"
                 }`}
               >
-                {msg.text}
-              </div>
+                {isRecording ? "● Recording..." : "🎤"}
+              </button>
+              <input
+                ref={inputRef}
+                type="text"
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={loading || phase === "done"}
+                placeholder={
+                  phase === "done" ? "Conversation complete" : "Type or tap mic to speak..."
+                }
+                className="flex-1 border rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 bg-white disabled:bg-gray-100"
+              />
+              <button
+                onClick={handleSend}
+                disabled={loading || phase === "done" || !inputText.trim()}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
+              >
+                Send
+              </button>
             </div>
-          ))}
-
-          {loading && (
-            <div className="flex justify-start">
-              <div className="bg-gray-200 text-gray-500 px-4 py-2 rounded-lg text-sm italic">
-                Bot is typing...
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-2 rounded-lg text-sm">
-              {error}
-            </div>
-          )}
-
-          {prediction && (
-            <div className={`border-2 rounded-lg p-4 text-sm ${riskColor}`}>
-              <div className="font-semibold mb-2">Your Screening Result</div>
-              {explanation && <div className="mb-3">{explanation}</div>}
-              <div className="text-xs opacity-75 border-t pt-2 mt-2">
-                Technical details — Result: {prediction.label}, Risk level: {prediction.risk_level.toUpperCase()}
-              </div>
-            </div>
-          )}
-
-          <div ref={bottomRef} />
-        </div>
-
-        <div className="border-t p-3 flex gap-2">
-          <button
-            onClick={handleMicClick}
-            disabled={loading || phase === "done" || !speechSupported}
-            title={speechSupported ? "Tap to speak" : "Voice input not supported in this browser"}
-            className={`px-3 py-2 rounded-lg text-sm disabled:opacity-50 ${
-              isRecording
-                ? "bg-red-500 text-white animate-pulse"
-                : "bg-gray-200 text-gray-700"
-            }`}
-          >
-            {isRecording ? "● Recording..." : "🎤"}
-          </button>
-          <input
-            ref={inputRef}
-            type="text"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={loading || phase === "done"}
-            placeholder={
-              phase === "done" ? "Conversation complete" : "Type or tap mic to speak..."
-            }
-            className="flex-1 border rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 bg-white disabled:bg-gray-100"
-          />
-          <button
-            onClick={handleSend}
-            disabled={loading || phase === "done" || !inputText.trim()}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
-          >
-            Send
-          </button>
-        </div>
-      </div>
-    </main>
-  );
+          </div>
+        </main>
+      );
 }

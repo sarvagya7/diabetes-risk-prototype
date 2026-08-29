@@ -54,7 +54,7 @@ def _next_target_field(state: PatientState) -> str | None:
     return None
 
 
-def run_chat_turn(history: list[Message], state: PatientState, user_message: str) -> GeminiTurnOutput:
+def run_chat_turn(history: list[Message], state: PatientState, user_message: str, language: str = "English") -> GeminiTurnOutput:
     known_fields = {k: v for k, v in state.model_dump().items() if v is not None}
     target_field = _next_target_field(state)
 
@@ -81,6 +81,10 @@ def run_chat_turn(history: list[Message], state: PatientState, user_message: str
         )
 
     context_block = f"""Known information so far (JSON): {json.dumps(known_fields)}
+
+IMPORTANT: Respond ONLY in {language}. Translate your warm, natural tone
+appropriately into {language} — do not respond word-for-word literally,
+sound natural in that language.
 
 {target_instruction}
 
@@ -122,7 +126,7 @@ SYMPTOM_LABELS = {
 }
 
 
-def generate_plain_explanation(state: PatientState, risk_level: str) -> str:
+def generate_plain_explanation(state: PatientState, risk_level: str, language: str = "English") -> str:
     data = state.model_dump()
     symptoms_present = [
         label for field, label in SYMPTOM_LABELS.items() if data.get(field) == 1
@@ -133,7 +137,31 @@ def generate_plain_explanation(state: PatientState, risk_level: str) -> str:
         risk_level=risk_level,
         symptoms_present=symptoms_text,
     )
+    prompt += f"\n\nIMPORTANT: Write this explanation entirely in {language}."
 
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt,
+    )
+    return response.text.strip()
+
+CONFIRMATION_PROMPT_TEMPLATE = """You are "Bot", the same warm health assistant.
+All required information has now been collected:
+
+{known_fields_json}
+
+Write a warm, simple summary of everything above in {language}, in plain
+conversational language (not a bulleted list), then ask the user to
+confirm it's all correct or point out anything wrong. Respond with ONLY
+the message text, no formatting, no JSON."""
+
+
+def generate_confirmation_summary(state: PatientState, language: str = "English") -> str:
+    known_fields = {k: v for k, v in state.model_dump().items() if v is not None}
+    prompt = CONFIRMATION_PROMPT_TEMPLATE.format(
+        known_fields_json=json.dumps(known_fields),
+        language=language,
+    )
     response = client.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,

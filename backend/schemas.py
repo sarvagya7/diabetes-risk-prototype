@@ -61,7 +61,8 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     history: list[Message] = []
     state: PatientState
-    user_message: str  # empty string "" signals "start the conversation"
+    user_message: str
+    language: str = "English"
 
 
 class GeminiTurnOutput(BaseModel):

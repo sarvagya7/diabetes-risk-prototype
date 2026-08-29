@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from schemas import ChatRequest, ChatResponse, PatientState, REQUIRED_FIELDS
-from gemini_client import run_chat_turn, generate_plain_explanation 
+from gemini_client import run_chat_turn, generate_plain_explanation, generate_confirmation_summary 
 from ml.model_registry import get_active_model
 
 app = FastAPI()
@@ -69,12 +69,20 @@ def all_required_filled(state: PatientState) -> bool:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    result = run_chat_turn(req.history, req.state, req.user_message)
+    result = run_chat_turn(req.history, req.state, req.user_message, req.language)
     merged_state = merge_state(req.state, result.updated_fields)
 
     phase = result.phase
+    reply_text = result.reply_text
+
     if phase == "gathering" and all_required_filled(merged_state):
         phase = "confirming"
+
+    # Whenever we're in confirming phase (whether just entered, or re-confirming
+    # after a correction), always regenerate a guaranteed-accurate summary rather
+    # than trusting the model's own reply_text for this turn.
+    if phase == "confirming":
+        reply_text = generate_confirmation_summary(merged_state, req.language)
 
     prediction = None
     explanation = None
@@ -85,10 +93,10 @@ def chat(req: ChatRequest):
 
         model = get_active_model()
         prediction = model.predict(record)
-        explanation = generate_plain_explanation(merged_state, prediction["risk_level"])
+        explanation = generate_plain_explanation(merged_state, prediction["risk_level"], req.language)
 
     return ChatResponse(
-        reply_text=result.reply_text,
+        reply_text=reply_text,
         state=merged_state,
         phase=phase,
         prediction=prediction,
