@@ -1,13 +1,14 @@
 import json
-import joblib
 import numpy as np
+import xgboost as xgb
 
 from .model_interface import DiabetesModel, PredictionResult
 
 
 class XGBoostAdapter(DiabetesModel):
     def __init__(self, model_path: str, feature_order_path: str):
-        self.model = joblib.load(model_path)
+        self.model = xgb.XGBClassifier()
+        self.model.load_model(model_path)
         with open(feature_order_path) as f:
             self.feature_order = json.load(f)
 

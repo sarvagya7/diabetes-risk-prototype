@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
+from schemas import ChatRequest, ChatResponse, PatientState, REQUIRED_FIELDS
+from gemini_client import run_chat_turn
 from ml.model_registry import get_active_model
 
 app = FastAPI()
@@ -47,3 +48,46 @@ def predict(record: PatientRecord):
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
+def merge_state(current: PatientState, updates) -> PatientState:
+    data = current.model_dump()
+    update_data = updates.model_dump()
+    for k, v in update_data.items():
+        if v is not None:
+            data[k] = v
+    return PatientState(**data)
+
+
+def all_required_filled(state: PatientState) -> bool:
+    data = state.model_dump()
+    if any(data.get(f) is None for f in REQUIRED_FIELDS):
+        return False
+    if data.get("genital_thrush") is None and not data.get("genital_thrush_skipped"):
+        return False
+    return True
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(req: ChatRequest):
+    result = run_chat_turn(req.history, req.state, req.user_message)
+    merged_state = merge_state(req.state, result.updated_fields)
+
+    phase = result.phase
+    if phase == "gathering" and all_required_filled(merged_state):
+        phase = "confirming"
+
+    prediction = None
+    if phase == "done":
+        record = merged_state.model_dump()
+        record["genital_thrush"] = record["genital_thrush"] if record["genital_thrush"] is not None else 0
+        del record["genital_thrush_skipped"]
+
+        model = get_active_model()
+        prediction = model.predict(record)
+
+    return ChatResponse(
+        reply_text=result.reply_text,
+        state=merged_state,
+        phase=phase,
+        prediction=prediction,
+    )
