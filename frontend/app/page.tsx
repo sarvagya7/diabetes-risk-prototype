@@ -198,59 +198,78 @@ export default function Home() {
       recognitionRef.current?.stop();
       return;
     }
-
+  
     const SpeechRecognitionCtor =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
       setError("Voice input isn't supported in this browser. Please type instead.");
       return;
     }
-
+  
     const recognition = new SpeechRecognitionCtor();
     recognition.lang = selectedLanguage.code;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
-
+  
     let silenceTimer: ReturnType<typeof setTimeout> | null = null;
-    let finalTranscript = "";
-
+    let noSpeechTimer: ReturnType<typeof setTimeout> | null = null;
+    let latestTranscript = "";
+    let hasHeardAnything = false;
+  
     const resetSilenceTimer = () => {
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
         recognition.stop();
-      }, 1500); // stop 1.2s after the last detected speech
+      }, 1500);
     };
-
-    recognition.onstart = () => setIsRecording(true);
-
-    recognition.onresult = (event: any) => {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interim += transcript;
+  
+    recognition.onstart = () => {
+      setIsRecording(true);
+      noSpeechTimer = setTimeout(() => {
+        if (!hasHeardAnything) {
+          recognition.stop();
         }
+      }, 3500);
+    };
+  
+    recognition.onresult = (event: any) => {
+      hasHeardAnything = true;
+      if (noSpeechTimer) clearTimeout(noSpeechTimer);
+  
+      // Rebuild the full transcript from ALL results every time, regardless
+      // of isFinal — Chrome's continuous mode is unreliable about ever
+      // marking results final, so we can't depend on that flag at all.
+      let combined = "";
+      for (let i = 0; i < event.results.length; i++) {
+        combined += event.results[i][0].transcript;
       }
+      latestTranscript = combined;
+  
       resetSilenceTimer();
     };
-
+  
     recognition.onerror = (event: any) => {
       setIsRecording(false);
       if (silenceTimer) clearTimeout(silenceTimer);
-      setError(`Voice input error: ${event.error}. Please try again or type instead.`);
+      if (noSpeechTimer) clearTimeout(noSpeechTimer);
+      if (event.error !== "no-speech") {
+        setError(`Voice input error: ${event.error}. Please try again or type instead.`);
+      }
     };
-
+  
     recognition.onend = () => {
       setIsRecording(false);
       if (silenceTimer) clearTimeout(silenceTimer);
-      const text = finalTranscript.trim();
+      if (noSpeechTimer) clearTimeout(noSpeechTimer);
+      const text = latestTranscript.trim();
       if (text && !loading && phase !== "done") {
         sendMessage(text);
+      } else if (!text) {
+        setError("I didn't catch that. Please try again.");
       }
     };
-
+  
     recognitionRef.current = recognition;
     recognition.start();
   }
